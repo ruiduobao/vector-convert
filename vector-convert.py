@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Vector data format converter - converts between SHP, GeoJSON, KML, GPX, GeoPackage, CSV."""
+"""Vector data format converter - converts between SHP, GeoJSON, KML, GPX, GeoPackage, CSV.
+
+Privacy disclosure
+------------------
+This tool reads and writes only local files. No data is sent over the network.
+
+Public domain notice
+--------------------
+This tool does not transmit any data and does not access any
+external services. All processing is local.
+
+License
+-------
+MIT-0 — No Attribution.
+"""
 
 import argparse
 import csv

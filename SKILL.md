@@ -1,3 +1,17 @@
+---
+name: vector-convert
+display_name: Vector Format Converter
+version: 0.1.0
+author: rui.duobao
+license: MIT-0
+description: |
+  Convert between vector GIS formats using only Python standard library.
+  Supports Shapefile, GeoJSON, KML, GPX, GeoPackage, and CSV.
+  Zero external dependencies.
+runtime: python>=3.8
+tags: [gis, vector, shapefile, geojson, kml, gpx, gpkg, csv, zero-dependency]
+---
+
 # Vector Format Converter
 
 Convert between vector GIS formats using only Python standard library.
