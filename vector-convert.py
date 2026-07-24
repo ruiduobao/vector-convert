@@ -563,8 +563,15 @@ def parse_gpkg_geom_blob(blob):
     return parse_wkb_geometry(blob, header_size, endian_char)
 
 def parse_wkb_geometry(data, offset, endian_char):
-    if offset + 4 > len(data):
+    if offset + 5 > len(data):
         return None
+    # Skip WKB byte-order mark (1 byte) and read geometry type (4 bytes)
+    wkb_endian = data[offset]
+    offset += 1
+    if wkb_endian == 0:
+        endian_char = ">"
+    elif wkb_endian == 1:
+        endian_char = "<"
     geom_type = struct.unpack_from(endian_char + "I", data, offset)[0]
     offset += 4
 
