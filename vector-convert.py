@@ -1034,11 +1034,15 @@ def write_dbf(path, features, dbf_fields):
     header_size = 32 + len(dbf_fields) * 32 + 1
     record_size = 1 + sum(f["length"] for f in dbf_fields)
 
+    # Set language driver byte (offset 29) to 0xC8 (Windows ANSI) to support
+    # non-ASCII field names and values (e.g. Chinese characters)
     header = struct.pack("<BBBBIHH", 3, 0, 0, 0, num_records, header_size, record_size)
-    header += b"\x00" * 20
+    header += b"\x00" * 17  # reserved bytes 12-28
+    header += b"\xC8"       # byte 29: language driver = Windows ANSI
+    header += b"\x00" * 2   # reserved bytes 30-31
 
     for f in dbf_fields:
-        name_bytes = f["name"][:10].encode("ascii").ljust(11, b"\x00")
+        name_bytes = f["name"][:10].encode("utf-8", errors="replace").ljust(11, b"\x00")
         header += name_bytes
         header += f["type"].encode("ascii")
         header += b"\x00" * 4
@@ -1058,7 +1062,7 @@ def write_dbf(path, features, dbf_fields):
                     val_str = ""
                 else:
                     val_str = str(val)
-                val_bytes = val_str.encode("ascii", errors="replace")[:field["length"]]
+                val_bytes = val_str.encode("utf-8", errors="replace")[:field["length"]]
                 val_bytes = val_bytes.ljust(field["length"], b" ")
                 rec += val_bytes
             f.write(rec)
