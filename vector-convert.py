@@ -648,11 +648,15 @@ def read_csv(path):
 
     return {"type": "FeatureCollection", "features": features, "crs_wkt": EPSG_DEFS[4326]["wkt"]}
 
-def read_input(path):
-    ext = Path(path).suffix.lower()
-    fmt = FORMAT_EXTENSIONS.get(ext)
+def read_input(path, format_hint=None):
+    if format_hint and format_hint != "auto":
+        # User explicitly told us the format; trust it.
+        fmt = format_hint
+    else:
+        ext = Path(path).suffix.lower()
+        fmt = FORMAT_EXTENSIONS.get(ext)
     if fmt is None:
-        raise ValueError(f"Unsupported input format: {ext}")
+        raise ValueError(f"Unsupported input format: {ext if format_hint is None else format_hint}")
 
     if fmt == "shp":
         return read_shapefile(path)
@@ -1233,8 +1237,8 @@ def get_info(data):
         "bounds": bounds,
     }
 
-def convert(input_path, output_path, output_format, crs=None, precision=6, fields=None, bbox=None, info_only=False):
-    data = read_input(input_path)
+def convert(input_path, output_path, output_format, crs=None, precision=6, fields=None, bbox=None, info_only=False, input_format=None):
+    data = read_input(input_path, format_hint=input_format)
 
     if info_only:
         return get_info(data)
@@ -1271,6 +1275,14 @@ def main():
     )
     parser.add_argument("input", help="Input file path")
     parser.add_argument("-o", "--output", help="Output file path")
+    parser.add_argument(
+        "--format",
+        choices=["auto"] + SUPPORTED_FORMATS,
+        default="auto",
+        help="Input format. 'auto' (default) detects from the file extension; "
+             "set explicitly when the extension is missing or wrong "
+             "(e.g. --format geojson for a .dat file containing GeoJSON).",
+    )
     parser.add_argument("--to", choices=SUPPORTED_FORMATS, help="Output format")
     parser.add_argument("--crs", help="Target CRS (e.g., EPSG:4326, EPSG:3857)")
     parser.add_argument("--precision", type=int, default=6, help="Coordinate decimal places")
@@ -1278,6 +1290,13 @@ def main():
     parser.add_argument("--bbox", nargs=4, type=float, metavar=("minLon", "minLat", "maxLon", "maxLat"),
                         help="Clip to bounding box")
     parser.add_argument("--info", action="store_true", help="Show input file info")
+    parser.add_argument("--batch-dir",
+                        help="Convert all supported files in this directory; "
+                             "outputs go to <dir>/converted/<basename>.<new_ext>")
+    parser.add_argument("--batch-format", choices=SUPPORTED_FORMATS,
+                        help="Target format for --batch-dir")
+    parser.add_argument("--qa", action="store_true",
+                        help="Write a QA summary JSON next to the output")
 
     args = parser.parse_args()
 
@@ -1285,9 +1304,46 @@ def main():
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
+    # Batch mode: convert all supported files in a directory
+    if args.batch_dir:
+        if not args.batch_format:
+            print("Error: --batch-dir requires --batch-format", file=sys.stderr)
+            sys.exit(1)
+        in_dir = Path(args.batch_dir)
+        if not in_dir.is_dir():
+            print(f"Error: not a directory: {args.batch_dir}", file=sys.stderr)
+            sys.exit(1)
+        out_dir = in_dir / "converted"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ext_map = {"geojson": ".geojson", "shp": ".shp", "kml": ".kml",
+                   "gpx": ".gpx", "gpkg": ".gpkg", "csv": ".csv"}
+        out_ext = ext_map[args.batch_format]
+        qa_files = []
+        for src in in_dir.iterdir():
+            if not src.is_file():
+                continue
+            try:
+                out = out_dir / (src.stem + out_ext)
+                convert(str(src), str(out), args.batch_format,
+                        target_crs=args.crs, precision=args.precision,
+                        keep_fields=args.fields, clip_bbox=args.bbox)
+                qa_files.append(str(out))
+                print(f"  {src.name} -> {out.relative_to(in_dir)}")
+            except Exception as e:
+                print(f"  SKIP {src.name}: {e}", file=sys.stderr)
+        if args.qa and qa_files:
+            qa_path = out_dir / "batch.qa.json"
+            with open(qa_path, "w", encoding="utf-8") as f:
+                json.dump({"batch_dir": str(in_dir), "target_format": args.batch_format,
+                           "outputs": qa_files, "count": len(qa_files)}, f,
+                          ensure_ascii=False, indent=2)
+            print(f"QA: {qa_path}")
+        return 0
+
     try:
         if args.info:
-            info = convert(args.input, None, None, info_only=True)
+            info = convert(args.input, None, None, info_only=True,
+                           input_format=args.format)
             print(json.dumps(info, indent=2))
         else:
             if args.output is None:
@@ -1298,9 +1354,25 @@ def main():
 
             result = convert(args.input, args.output, args.to,
                              crs=args.crs, precision=args.precision,
-                             fields=args.fields, bbox=args.bbox)
+                             fields=args.fields, bbox=args.bbox,
+                             input_format=args.format)
             print(f"Converted {result['features']} features to {result['format'].upper()}")
             print(f"Output: {result['output']}")
+            if getattr(args, "qa", False):
+                qa = {
+                    "input": args.input,
+                    "output": result["output"],
+                    "format": result["format"],
+                    "feature_count": result["features"],
+                    "crs": args.crs,
+                    "bbox": args.bbox,
+                    "fields_kept": args.fields,
+                    "precision": args.precision,
+                }
+                qa_path = str(Path(args.output).with_suffix("")) + ".qa.json"
+                with open(qa_path, "w", encoding="utf-8") as f:
+                    json.dump(qa, f, ensure_ascii=False, indent=2)
+                print(f"QA: {qa_path}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

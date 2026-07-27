@@ -3,6 +3,8 @@
 import json
 import os
 import struct
+import sys
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -176,3 +178,81 @@ class TestMultiStepConversion:
         vc.convert(str(sample_kml_path), str(shp_out), "shp")
         result = vc.convert(str(shp_out), str(csv_out), "csv")
         assert result["features"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — --format flag (input format hint, default: auto)
+# ---------------------------------------------------------------------------
+
+
+def _cli(*args):
+    """Run vector-convert.py and return (returncode, stdout, stderr)."""
+    skill_root = Path(__file__).resolve().parent.parent
+    script = skill_root / "vector-convert.py"
+    cmd = [sys.executable, str(script)] + list(args)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+
+def test_help_lists_format_flag():
+    """`--help` should advertise the --format flag with 'auto' choice."""
+    proc = _cli("--help")
+    assert proc.returncode == 0
+    combined = proc.stdout + proc.stderr
+    assert "--format" in combined
+    assert "auto" in combined
+
+
+def test_default_format_is_auto(sample_geojson_path, tmp_dir):
+    """Without --format, the format is auto-detected from the .geojson extension."""
+    csv_out = tmp_dir / "auto.csv"
+    proc = _cli(str(sample_geojson_path), "-o", str(csv_out), "--to", "csv")
+    assert proc.returncode == 0, f"stderr: {proc.stderr}"
+    assert csv_out.exists()
+    # The auto-detected format is geojson, output is csv → 3 features
+    rows = csv_out.read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 4  # header + 3 features
+
+
+def test_explicit_format_overrides_extension(tmp_dir, sample_geojson_path):
+    """`--format geojson` on a file with a misleading extension should still work."""
+    # Copy the sample GeoJSON to a file with a non-standard extension
+    bad_ext_path = tmp_dir / "mystery.dat"
+    bad_ext_path.write_bytes(sample_geojson_path.read_bytes())
+    csv_out = tmp_dir / "out.csv"
+    # Without --format: read_input() should fail (unknown .dat extension)
+    proc_no_flag = _cli(str(bad_ext_path), "-o", str(csv_out), "--to", "csv")
+    assert proc_no_flag.returncode != 0
+    # With --format geojson: should succeed
+    proc_with_flag = _cli(str(bad_ext_path), "-o", str(csv_out),
+                          "--format", "geojson", "--to", "csv")
+    assert proc_with_flag.returncode == 0, f"stderr: {proc_with_flag.stderr}"
+    rows = csv_out.read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 4
+
+
+def test_format_rejects_invalid_choice(sample_geojson_path, tmp_dir):
+    """`--format xml` (not in choices) should be rejected by argparse."""
+    csv_out = tmp_dir / "bad.csv"
+    proc = _cli(str(sample_geojson_path), "-o", str(csv_out),
+                "--format", "xml", "--to", "csv")
+    # argparse exits with code 2 on invalid choice
+    assert proc.returncode != 0
+
+
+def test_format_auto_is_explicit_default(sample_geojson_path, tmp_dir):
+    """Passing `--format auto` explicitly should behave the same as the default."""
+    csv_out = tmp_dir / "auto_explicit.csv"
+    proc = _cli(str(sample_geojson_path), "-o", str(csv_out),
+                "--format", "auto", "--to", "csv")
+    assert proc.returncode == 0
+    assert csv_out.exists()
+
+
+def test_format_with_info_flag(tmp_dir, sample_geojson_path):
+    """`--format geojson --info` should report features even for a misleading extension."""
+    bad_ext_path = tmp_dir / "mystery.dat"
+    bad_ext_path.write_bytes(sample_geojson_path.read_bytes())
+    proc = _cli(str(bad_ext_path), "--format", "geojson", "--info")
+    assert proc.returncode == 0, f"stderr: {proc.stderr}"
+    data = json.loads(proc.stdout)
+    assert "features" in data or "feature_count" in data or "format" in data
